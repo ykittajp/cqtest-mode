@@ -79,9 +79,14 @@ It contain Score table implemented by alist.
 Key is band that is generated from `cqtest-band-alist'.
 Value is list '(QSO Points Multiplier)'")
 
+;; misc tool functions
+(if (null (fboundp 'cdddr))
+    (defun cdddr (x) (cdr (cdr (cdr x)))))
+
 (defun chomp (string)
   "Truncate string's space at beginning and end."
   (replace-regexp-in-string "^\\s-+\\|\\s-+$" "" string))
+
 
 (defun get-previous-list (inlist field)
   "Get previous field of list."
@@ -146,6 +151,7 @@ Value is list '(QSO Points Multiplier)'")
     (fieldp flength cqtest-length-fields)))
 
 (defun cqtest-mode ()
+  "cqtest-mode --- Contest Logging Major Mode for Emacs"
   (interactive)
   (setq major-mode 'cqtest-mode
 	mode-name "Contest Logging Mode")
@@ -584,9 +590,7 @@ Inner save-excursion."
   "Called when new multiplier
 parameter `multi-flag' is multi-flag-map element such as:
   '(\"101\" . (t nil nil nil t nil))'"
-  (message "Bar band=%s" band)
   (cqsm-set-multiplier-field band (1+ (cqsm-get-multiplier-field band)))
-  (message "Bar")
   (cqmm-set-multivalue-with-band (cdr multi-flag) band t))
 
 (defun cqtest-on-decision-qso ()
