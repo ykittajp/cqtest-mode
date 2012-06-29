@@ -177,30 +177,32 @@ Value is list '(QSO Points Multiplier)'")
   (define-key cqtest-keymap (kbd "C-c C-v s") 'cqtest-scoremap-make-buffer)
   (use-local-map cqtest-keymap)
 
-  ;; TODO: another implementation...
-  (setq overewrite-mode overwrite-mode-textual)
+  (let ((i ?a) (j (- ?A ?a)))
+    (while (< i (1+ ?z))
+      (define-key cqtest-keymap (char-to-string i)
+	'cqtest-self-insert-command)
+      (define-key cqtest-keymap (char-to-string (+ i j))
+	'cqtest-self-insert-command)
+      (setq i (1+ i))))
+  (let ((i ?0))
+    (while (< i (1+ ?9))
+      (define-key cqtest-keymap (char-to-string i)
+	'cqtest-self-insert-command)))
+  (define-key cqtest-keymap (kbd ".") 'cqtest-self-insert-command)
+  (define-key cqtest-keymap (kbd "?") 'cqtest-self-insert-command)
+  (define-key cqtest-keymap (kbd "/") 'cqtest-self-insert-command)
 
-;;   (ad-activate 'self-insert-command)
-;;   (if (fboundp 'make-local-hook)
-;;       (make-local-hook 'pre-command-hook))
-;;   (add-hook pre-command-hook 'cqtest-on-pre-command t t)
+  ;; TODO: another implementation...
+  ;; cf. http://d.hatena.ne.jp/Hoshi-KN/20091031/1256993744
   )
 
-;; (defun cqtest-on-pre-command ()
-;;   (cond ((eq this-command 'self-insert-command)
-;; 	 (message "hook: [self-insert-command]"))
-;; 	((eq this-command 'insert)
-;; 	 (message "hook: [insert]"))
-;; 	(t (message "hook: [other]"))))
-
-;; (defadvice self-insert-command (before cqtest-insert-command)
-;;   ;;   (let (cursor (car (cqtest-fieldp)))
-;;   ;;     (if (or (eq cursor 'callsign)
-;;   ;; 	    (eq cursor 'nr))
-;;   ;; 	(setq overwrite-mode overwrite-mode-textual)
-;;   ;;       (setq overwrite-mode nil)))
-;;   (message "[self-insert-command]"))
-;; ;;     (message "[self-insert-command] %d" (ad-get-arg 0)))
+(defun cqtest-self-insert-command (&optional n)
+  "Like `self-insert-command'. Handle espicially
+when the cursor is in callsign field and nr field"
+  (interactive "p")
+  ;; TODO: overwrite in callsign field and number field
+  (setq last-command-char (upcase last-command-char))
+  (self-insert-command n))
 
 ;; Move column to absolute field place.
 (defun cqtest-get-length-between-bol-field (field)
