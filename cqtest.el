@@ -87,6 +87,12 @@ Value is list '(QSO Points Multiplier)'")
   "Truncate string's space at beginning and end."
   (replace-regexp-in-string "^\\s-+\\|\\s-+$" "" string))
 
+(defun copy-list (list)
+  "Copy list recursively. (data included list also is copied.)"
+  (cond ((null list) nil)
+	((consp list) (cons (copy-list (car list))
+			    (copy-list (cdr list))))
+	(t list)))
 
 (defun get-previous-list (inlist field)
   "Get previous field of list."
@@ -102,9 +108,11 @@ Value is list '(QSO Points Multiplier)'")
   (beginning-of-line)
   )
 
-;; make assoc list which holds absolute fields length from bol.
-;; this function is only called when initialized.
 (defun cqtest-set-absolute-length-fields ()
+  "Make alist `cqtest-absolute-length-fields'
+Make alist which holds absolute field length from beginning of line.
+And this alist is generated `cqtest-length-fields'.
+This function is only called when initialized."
   (defun cqtest-set-absolute-length-fields-inner (ilist n)
     (cond ((null ilist) nil)
 	  (t
@@ -135,23 +143,28 @@ Value is list '(QSO Points Multiplier)'")
   (+ (cdar (last cqtest-absolute-length-fields))
      (cdar (last cqtest-length-fields))))
 
-;; Find field that pointer points from current point.
-(defun cqtest-fieldp ()
-  (let* ((flength (- (point) (point-at-bol)))
-	 (fieldptr cqtest-length-fields))
-    (defun fieldp (n p)
-      (if (null p)
-	  nil
-	(if (< n (cdar p))
-	    (car p)
-	  (if (null (cdr p))
-	      (car p)
-	    (fieldp (- n (cdar p)) (cdr p))))
-	))
-    (fieldp flength cqtest-length-fields)))
+(defun cqtest-fieldp (&optional p)
+  "Find what field the cursor is belong to.
+If P is non-nil, Calcurate P instead of (point)"
+  (let* ((x)
+	 (ls (copy-list cqtest-absolute-length-fields))
+	 (ret))
+    (if (null p)
+	(setq x (- (point) (point-at-bol)))
+      (setq x (- p (point-at-bol))))
+    
+    (mapcar (lambda (p) (setcdr p (- x (cdr p)))) ls)
+    (dolist (p ls)
+      (unless (< (cdr p) 0) (setq ret p)))
+    (cond ((null ret) nil)
+	  ((and (equal (car ret)
+		       (caar (last cqtest-absolute-length-fields)))
+		(> (cdr ret) 0)) nil)
+	  (t (car ret)))))
 
 (defun cqtest-mode ()
-  "cqtest-mode --- Contest Logging Major Mode for Emacs"
+  "cqtest-mode --- Contest Logging Major Mode for Emacs
+\\{cqtest-keymap}"
   (interactive)
   (setq major-mode 'cqtest-mode
 	mode-name "Contest Logging Mode")
@@ -187,22 +200,40 @@ Value is list '(QSO Points Multiplier)'")
   (let ((i ?0))
     (while (< i (1+ ?9))
       (define-key cqtest-keymap (char-to-string i)
-	'cqtest-self-insert-command)))
+	'cqtest-self-insert-command)
+      (setq i (1+ i))))
   (define-key cqtest-keymap (kbd ".") 'cqtest-self-insert-command)
   (define-key cqtest-keymap (kbd "?") 'cqtest-self-insert-command)
   (define-key cqtest-keymap (kbd "/") 'cqtest-self-insert-command)
 
-  ;; TODO: another implementation...
-  ;; cf. http://d.hatena.ne.jp/Hoshi-KN/20091031/1256993744
+  ;; font-lock (Coloring)
+  (font-lock-add-keywords
+   'cqtest-mode
+   '(("^#.*$" . font-lock-comment-face)))
+  (font-lock-fontify-buffer)
   )
+
 
 (defun cqtest-self-insert-command (&optional n)
   "Like `self-insert-command'. Handle espicially
 when the cursor is in callsign field and nr field"
   (interactive "p")
+  (let ((cursor (cqtest-fieldp)))
+    (cond ((or (equal cursor 'callsign) (equal cursor 'nr))
+	   (if (< (- (point) (point-at-bol))
+		  (+ (cdr (assoc cursor cqtest-length-fields))
+		     (cdr (assoc cursor cqtest-absolute-length-fields))))
+	       (progn
+		 (when (= (char-after) ? )
+		   (delete-char 1))
+		 (setq last-command-char (upcase last-command-char))
+		 (self-insert-command n))
+	     (message "%s is too long" cursor)))
+;	  (t )
+	  )
   ;; TODO: overwrite in callsign field and number field
-  (setq last-command-char (upcase last-command-char))
-  (self-insert-command n))
+  ;; TODO: To handle in field without callsign and nr field 
+    ))
 
 ;; Move column to absolute field place.
 (defun cqtest-get-length-between-bol-field (field)
@@ -462,19 +493,27 @@ Each value of alist is related with `cqtest-band':
 		    (caar multi-map) (cdar multi-map)
 		    (cqmm-make-string-multiplier-value
 		     (cdr (assoc (caar multi-map) flag-map))))
-;		    (cdr (assoc (caar multi-map) flag-map)))
 	    (cqmm-output-string (cdr multi-map) flag-map)))))
 
-;; TODO: Multiplierを出さずに内容を更新する関数
+(defun cqmm-data-output ()
+  "Output data of Multiplier map"
+  (princ "Multiplier               Chkd.\n")
+  (princ "------------------------------\n")
+  (princ (cqmm-output-string cqtest-multi-map cqtest-multi-flag-map)))
+
+(defun cqmm-refresh ()
+  "Set Multiplier information to multiplier buffer."
+  (save-excursion
+    (set-buffer (get-buffer-create cqmm-buffer-name))
+    (setq buffer-read-only nil)
+    (erase-buffer)
+    (insert (cqmm-data-output))))
 
 (defun cqtest-multimap-make-buffer ()
   "Show Multiplier buffer."
   (interactive)
   (with-output-to-temp-buffer cqmm-buffer-name
-    (princ "Multiplier               Chkd.\n")
-    (princ "------------------------------\n")
-    (princ (cqmm-output-string cqtest-multi-map cqtest-multi-flag-map))
-  ))
+    (cqmm-data-output)))
 
 ;;; Score
 ;;; [Prefix] cqs-*
@@ -564,17 +603,29 @@ Each value of alist is related with `cqtest-band':
 (defvar cqsm-buffer-name "*Score map*")
 (defvar cqsm-fields-length-alist
   '((band . 6) (qso . 4) (points . 4) (multi . 4)))
+
+(defun cqsm-data-output ()
+  "Output data of Scoremap"
+  (princ "Score map\n")
+  (princ (cqsm-output-header))
+  (princ "---------------------\n")
+  (princ (cqsm-output-string cqtest-score-map))
+  (princ "---------------------\n")
+  (princ (format (cqsm-total-format) (cqsm-calc-score))))
+
+(defun cqsm-refresh ()
+  "Set Scoremap information to scoremap buffer."
+  (save-excursion
+    (set-buffer (get-buffer-create cqsm-buffer-name))
+    (setq buffer-read-only nil)
+    (erase-buffer)
+    (insert (cqsm-data-output))))
+
 (defun cqtest-scoremap-make-buffer ()
   "Show Score map buffer."
   (interactive)
   (with-output-to-temp-buffer cqsm-buffer-name
-    (princ "Score map\n")
-    (princ (cqsm-output-header))
-    (princ "---------------------\n")
-    (princ (cqsm-output-string cqtest-score-map))
-    (princ "---------------------\n")
-    (princ (format (cqsm-total-format) (cqsm-calc-score))
-  )))
+    (cqsm-data-output)))
 
 (defun cqtest-new-multi-p (multi band)
   "Return whether multiplier is new."
@@ -677,6 +728,12 @@ Set default value to field."
   (cqtest-qso-no-increment)
   (cqtest-on-new-qsoline)
   (move-to-column (cdr (assoc 'callsign cqtest-absolute-length-fields)))
+
+  ;; refresh sub windows.
+  (cqmm-refresh)
+  (cqsm-refresh)
+
+  (message "")
   )
 
 (provide 'cqtest)
