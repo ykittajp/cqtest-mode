@@ -51,8 +51,7 @@
 (defun cqtest-get-point-from-qso (callsign exnumber)
   "Return QSO's point"
   (if (or (null callsign) (string= callsign "")) 0
-    (when (string-match "\\([0-9][0-9]+\\)\\(UEC\\|H\\|I\\|L\\)"
-			exnumber)
+    (if (string-match "\\([0-9][0-9]+\\)\\(UEC\\|H\\|I\\|L\\)" exnumber)
       (let ((multi (match-string 1 exnumber))
 	    (licence (match-string 2 exnumber)))
 	(cond ((string= licence "UEC") 5)
@@ -60,10 +59,11 @@
 	      ((string= licence "I") 3)
 	      ((string= licence "H") 2)
 	      (t 0)			; invalid number
-	)))))
+	      ))
+	0)))
 
 (defun cqsm-calc-score ()
-  "Calcurate Score from score map (`cqtest-score-map')"
+  "Calculate Score from score map (`cqtest-score-map')"
   (let ((qso 0)
 	(pts 0)
 	(multi 0))
@@ -71,7 +71,7 @@
       (setq qso (+ qso (nth 1 record)))
       (setq pts (+ pts (nth 2 record)))
       (setq multi (+ multi (nth 3 record))))
-    
+
     ;; total score := pts * multi
     (* pts multi)))
 
