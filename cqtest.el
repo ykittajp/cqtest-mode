@@ -70,7 +70,7 @@ and used at extended map `cqtest-multi-exmap'.")
   "Multiplier flag map
 It is alist that have multiplier as key and flags (value)
 whether the operators have already communicated.
-`cqtest-set-multi-flag-map' generates automatically
+`cqtest-init-multi-flag-map' generates automatically
 from alist `cqtest-multi-map'.
 flags: nil=non-communicated t=communicated")
 (defvar cqtest-score-map '()
@@ -101,6 +101,12 @@ Value is list '(QSO Points Multiplier)'")
 	((eq (cadr inlist) field) (car inlist))
 	(t (get-previous-list (cdr inlist) field))))
 
+(defun cqtest-comment-line-p ()
+  "Return whether line which cursor exists is comment line or not"
+  (save-excursion
+    (goto-char (point-at-bol))
+    (equal (char-after) ?#)))
+
 (defun cqtest-move-editing-line ()
   "Move beginning of editing line."
   ;; Editing line is last line.
@@ -122,30 +128,48 @@ This function is only called when initialized."
 		 (cqtest-set-absolute-length-fields-inner
 		  (cdr ilist) (+ n (cdar ilist)
 				 cqtest-field-length-fieldsep)))
-)))
+	   )))
   (setq cqtest-absolute-length-fields
 	(cqtest-set-absolute-length-fields-inner
 	 cqtest-length-fields
 	 0)))
 
-(defun cqtest-set-multi-flag-map ()
-  (defun cqtest-set-multi-flag-map-inner (ilist)
+(defun cqtest-init-multi-flag-map ()
+  "Initialize `cqtest-multi-flag-map' from `cqtest-multi-map'.
+Global variable `cqtest-multi-map' is defined on contest definition file."
+  (defun cqtest-init-multi-flag-map-inner (ilist)
     (cond ((null ilist) '())
 	  (t
 	   (cons (cons (caar ilist)
 		       (make-list (length cqtest-band-alist) nil))
-		 (cqtest-set-multi-flag-map-inner (cdr ilist))))))
+		 (cqtest-init-multi-flag-map-inner (cdr ilist))))))
     (setq cqtest-multi-flag-map
-	  (cqtest-set-multi-flag-map-inner cqtest-multi-map)))
+	  (cqtest-init-multi-flag-map-inner cqtest-multi-map)))
+
+(defun cqtest-fill-qso-records ()
+  "Fill QSO Record with whitespace. It is called when initialize QSO Record"
+  (insert-char ?  (cqtest-get-record-length)))
 
 (defun cqtest-get-record-length ()
   "Return length of QSO record"
   (+ (cdar (last cqtest-absolute-length-fields))
-     (cdar (last cqtest-length-fields))))
+     (cdar (last cqtest-length-fields))
+     1))
+
+(defun cqtest-get-value-from-record (field)
+  "Return value from current record's field correspond to absolute length"
+  (let ((point-at-current-record
+	(+ (point-at-bol)
+	   (cdr (assoc field cqtest-absolute-length-fields))))
+	(field-length-current-record
+	 (cdr (assoc field cqtest-length-fields))))
+    (chomp (buffer-substring-no-properties
+     point-at-current-record
+     (+ point-at-current-record field-length-current-record)))))
 
 (defun cqtest-fieldp (&optional p)
   "Find what field the cursor is belong to.
-If P is non-nil, Calcurate P instead of (point)"
+If P is non-nil, Calculate P instead of (point)"
   (let* ((x)
 	 (ls (copy-list cqtest-absolute-length-fields))
 	 (ret))
@@ -162,6 +186,55 @@ If P is non-nil, Calcurate P instead of (point)"
 		(> (cdr ret) 0)) nil)
 	  (t (car ret)))))
 
+(defmacro cqtest-bind-record-field (&rest body)
+  "bind field variables of current record to rec-*"
+  (declare (indent 0))
+  `(let* ((rec-no (string-to-number (cqtest-get-value-from-record 'no)))
+	  (rec-call (cqtest-get-value-from-record 'callsign))
+	  (rec-nr (cqtest-get-value-from-record 'nr))
+	  (rec-band (cqtest-get-value-from-record 'band))
+	  (rec-mode (cqtest-get-value-from-record 'mode))
+	  (rec-mult (cqtest-get-multi rec-no rec-call rec-nr))
+	  (rec-multi-flag (assoc rec-mult cqtest-multi-flag-map))
+	  (rec-pts (cqtest-get-point-from-qso rec-call rec-nr))
+	  (rec-op (cqtest-get-value-from-record 'op))
+	  (rec-pwr (cqtest-get-value-from-record 'pwr)))
+     ,@body
+     ))
+
+(defun cqtest-load-file ()
+  "It it called when file loaded. Load previous QSO data
+ of file to Multimap "
+  (interactive)
+  ;; init multi-flag-map and score map
+  (cqsm-init)
+  
+  (save-excursion
+    (goto-char (point-min))
+    (while (not (eobp))
+      (if (not (cqtest-comment-line-p))
+	  ;; QSO Record (Comment line is excepted.)
+	  (cqtest-bind-record-field
+	    ;; Read multiplier of its line and add multiplier flag map.
+	    (unless (or (null rec-multi-flag)
+			(null rec-mult) (null rec-band)
+			(null (assoc rec-mult cqtest-mode-alist))
+			(null (assoc rec-band cqtest-band-alist)))
+	      (if (cqtest-new-multi-p rec-mult rec-band)
+		    (cqtest-on-new-multi rec-multi-flag rec-mult rec-band)))
+	    ;; Read QSO No. of its line.
+	    (if (> rec-no cqtest-current-qso-no)
+		(setq cqtest-current-qso-no rec-no))
+
+	    ;; TODO: Read score of its line and add into score map.
+	    (unless (or (string= rec-band "") (null rec-pts))
+	      (cqsm-add-qso-field rec-band 1)
+	      (cqsm-add-point-field rec-band rec-pts))
+	  ))
+      (forward-line 1)
+    )
+  ))
+
 (defun cqtest-mode ()
   "cqtest-mode --- Contest Logging Major Mode for Emacs
 \\{cqtest-keymap}"
@@ -171,7 +244,7 @@ If P is non-nil, Calcurate P instead of (point)"
 
   ;; Set variables
   (cqtest-set-absolute-length-fields)
-  (cqtest-set-multi-flag-map)
+  (cqtest-init-multi-flag-map)
   (cqtest-qso-no-set (cqtest-qso-no-get-maxno))
   (cqsm-init)
 
@@ -182,6 +255,7 @@ If P is non-nil, Calcurate P instead of (point)"
   (define-key cqtest-keymap (kbd "C-j") 'cqtest-decision-qso)
   (define-key cqtest-keymap (kbd "C-i") 'cqtest-move-field) ; tab
   (define-key cqtest-keymap (kbd "\t") 'cqtest-move-field)
+  (define-key cqtest-keymap (kbd "C-h") 'cqtest-delete-backward-char)
   (define-key cqtest-keymap (kbd "C-c b") 'cqtest-set-band)
   (define-key cqtest-keymap (kbd "C-c m") 'cqtest-set-mode)
   (define-key cqtest-keymap (kbd "C-c o") 'cqtest-set-op)
@@ -209,10 +283,9 @@ If P is non-nil, Calcurate P instead of (point)"
   ;; font-lock (Coloring)
   (font-lock-add-keywords
    'cqtest-mode
-   '(("^#.*$" . font-lock-comment-face)))
+   '(("#.*$" . font-lock-comment-face)))
   (font-lock-fontify-buffer)
   )
-
 
 (defun cqtest-self-insert-command (&optional n)
   "Like `self-insert-command'. Handle espicially
@@ -235,6 +308,12 @@ when the cursor is in callsign field and nr field"
   ;; TODO: To handle in field without callsign and nr field 
     ))
 
+(defun cqtest-delete-backward-char ()
+  (interactive)
+  (delete-backward-char 1)
+  (insert " ")
+  )
+
 ;; Move column to absolute field place.
 (defun cqtest-get-length-between-bol-field (field)
   (cdr (assoc field cqtest-absolute-length-fields)))
@@ -242,6 +321,8 @@ when the cursor is in callsign field and nr field"
 (defun cqtest-move-field ()
   (interactive)
   (let ((p (- (point) (point-at-bol))))
+    (if (eq (point-at-bol) (point-at-eol))
+	(insert-char ?  (cdar (last cqtest-absolute-length-fields))))
     (cond ((and (< p	; point == callsign
 		   (cqtest-get-length-between-bol-field 'nr))
 		(> p (1- (cqtest-get-length-between-bol-field
@@ -483,7 +564,6 @@ Each value of alist is related with `cqtest-band':
 (defun cqmm-set-multi-value (multi-key multi-value)
   (setcdr (assoc multi-key cqtest-multi-flag-map) multi-value))
 
-;(defun cqtest-multi-map-output (multi-map flag-map)
 (defun cqmm-output-string (multi-map flag-map)
   "Make formatted multiplier map string."
   (cond ((null multi-map) "")
@@ -631,13 +711,20 @@ Each value of alist is related with `cqtest-band':
   "Return whether multiplier is new."
   (let ((record (cdr (assoc multi cqtest-multi-flag-map))))
     (eq (cqmm-get-multivalue-with-band record band) nil)))
+(defun cqtest-get-current-line-string ()
+  "Return current line which cursor exists."
+    (buffer-substring-no-properties (point-at-bol) (point-at-eol)))
 
+(defvar cqtest-invalid-nr-string "# Invalid NR"
+  "String printed when decision QSO which have invalid number")
 (defun cqtest-on-invalid-nr ()
   "Called from `cqtest-on-decision-qso' when number of record is invalid.
 Inner save-excursion."
-  (move-to-column (+ (cdar (last cqtest-absolute-length-fields))
-		     (cdar (last cqtest-length-fields)) 1) t)
-  (insert "# Invalid NR"))
+  (unless (string-match cqtest-invalid-nr-string
+			(cqtest-get-current-line-string))
+    (move-to-column (+ (cdar (last cqtest-absolute-length-fields))
+		       (cdar (last cqtest-length-fields)) 1) t)
+    (insert cqtest-invalid-nr-string)))
 
 (defun cqtest-on-new-multi (multi-flag multi band)
   "Called when new multiplier
@@ -647,72 +734,82 @@ parameter `multi-flag' is multi-flag-map element such as:
   (cqmm-set-multivalue-with-band (cdr multi-flag) band t))
 
 (defun cqtest-on-decision-qso ()
-  "Called when decision QSO."
+  "Called when decision QSO.
+Process about decided QSO. This function does not process about next QSO."
   ;; If needed, modify QSO Timestamp
   (if cqtest-auto-modify-timestamp-flag
       (cqtest-insert-timestamp))
 
   (save-excursion
-    (let* ((cns (+ (point-at-bol)
-		   (cdr (assoc 'no cqtest-absolute-length-fields))))
-	   (ccs (+ (point-at-bol)
-		   (cdr (assoc 'callsign cqtest-absolute-length-fields))))
-	   (ces (+ (point-at-bol)
-		   (cdr (assoc 'nr cqtest-absolute-length-fields))))
-	   (cbs (+ (point-at-bol)
-		   (cdr (assoc 'band cqtest-absolute-length-fields))))
-	   (current-no (string-to-number 
-			(buffer-substring-no-properties
-			 cns (+ cns (cdr (assoc 'no
-						cqtest-length-fields))))))
-	   (current-call (chomp
-			  (buffer-substring-no-properties
-			   ccs (+ ccs (cdr (assoc 'callsign
-						  cqtest-length-fields))))))
-	   (current-nr (chomp
-			(buffer-substring-no-properties
-			 ces (+ ces (cdr (assoc 'nr
-						cqtest-length-fields))))))
-	   (current-band (chomp
-			  (buffer-substring-no-properties
-			   cbs (+ cbs (cdr (assoc 'band
-						  cqtest-length-fields))))))
-	   (multi (cqtest-get-multi current-no current-call current-nr))
- 	   (pts (cqtest-get-point-from-qso current-call current-nr)))
+    (cqtest-bind-record-field
+      ;; TODO: argument of `cqtest-get-multi' and `cqtest-geet-point-from-qso' should pass all contents of record.
+
+      ;; When `current-qso-no' is null, set it current QSO No.
+      (when (= rec-no 0)
+	(cqtest-insert-qso-no)
+	(setq rec-no cqtest-current-qso-no))
+
+      ;; When date and time is null, set it global value.
+      (when (and (string= (cqtest-get-value-from-record 'date) "")
+		 (string= (cqtest-get-value-from-record 'time) ""))
+	(cqtest-insert-timestamp))
+      
+      ;; When `rec-band' is null, set it global value.
+      (when (string= rec-band "")
+	(cqtest-set-band-to-current-line cqtest-current-band)
+	(setq rec-band cqtest-current-band))
+
+      ;; When `rec-mode' is null, set it global value.
+      (when (string= rec-mode "")
+	(cqtest-set-mode-to-current-line cqtest-current-mode)
+	(setq rec-mode cqtest-current-mode))
+
+      ;; When op is null, set it global value.
+      (when (string= (cqtest-get-value-from-record 'op) "")
+	(cqtest-set-op-to-current-line cqtest-current-op)
+	(setq rec-op cqtest-current-op))
+      
+      ;; When pwr is null, set it global value.
+      (when (string= (cqtest-get-value-from-record 'pwr) "")
+	(cqtest-set-pwr-to-current-line cqtest-current-pwr)
+	(setq rec-pwr cqtest-current-pwr))
 
       ;; Get multi this QSO
       ;; If multiplier of QSO is new multiplier:
-      (let ((multi-flag (assoc multi cqtest-multi-flag-map)))
-	(if (null multi-flag)
-	    (cqtest-on-invalid-nr)
-	  (if (cqtest-new-multi-p multi current-band)
-	      (cqtest-on-new-multi multi-flag multi current-band)
-	    )))
+      (if (null rec-multi-flag)
+	  (cqtest-on-invalid-nr)
+	(if (cqtest-new-multi-p rec-mult rec-band)
+	    (cqtest-on-new-multi rec-multi-flag rec-mult rec-band)
+	  ))
 
       ;; Update Score map (without multiplier)
-      (cqsm-add-qso-field current-band 1)
-      (cqsm-add-point-field current-band pts)
+      (cqsm-add-qso-field rec-band 1)
+      (cqsm-add-point-field rec-band rec-pts)
 
       ;; update points field
-      (move-to-column (cdr (assoc 'points cqtest-absolute-length-fields)))
-      (cqtest-set-points-to-current-line pts)
+      (move-to-column (cdr (assoc 'points cqtest-absolute-length-fields)) t)
+      (cqtest-set-points-to-current-line rec-pts)
     ))
 
-  ;; TODO: Refresh multiplier-map
-  ;; TODO: Refresh Score.
-  )
+  ;; refresh info
+  (cqtest-info-refresh))
 
 (defun cqtest-on-new-qsoline ()
   "Called when new line.
 Set default value to field."
-  (insert-char ?  (cqtest-get-record-length)) ; fill with space.
+  (cqtest-fill-qso-records)
   (cqtest-insert-qso-no)
   (cqtest-insert-timestamp)
   (cqtest-set-band-to-current-line cqtest-current-band)
   (cqtest-set-mode-to-current-line cqtest-current-mode)
   (cqtest-set-op-to-current-line cqtest-current-op)
-  (cqtest-set-pwr-to-current-line cqtest-current-pwr)
-  )
+  (cqtest-set-pwr-to-current-line cqtest-current-pwr))
+
+(defun cqtest-info-refresh ()
+  "Refresh non-main logging buffer (multiplier map, scoremap,...)"
+;  (interactive)
+  (cqmm-refresh)
+  (cqsm-refresh))
 
 ;; C-j
 (defun cqtest-decision-qso ()
@@ -721,19 +818,12 @@ Set default value to field."
   ;; TODO: Do action when only current line
   
   (cqtest-on-decision-qso)
-
   (goto-char (point-at-eol))
   (unless (and (bolp) (eolp))
     (insert "\n"))
   (cqtest-qso-no-increment)
   (cqtest-on-new-qsoline)
   (move-to-column (cdr (assoc 'callsign cqtest-absolute-length-fields)))
-
-  ;; refresh sub windows.
-  (cqmm-refresh)
-  (cqsm-refresh)
-
-  (message "")
   )
 
 (provide 'cqtest)
