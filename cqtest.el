@@ -65,7 +65,11 @@ and used at extended map `cqtest-multi-exmap'.")
   "Flag whether modify timestamp when decision QSO.")
 
 ;; Variables which Program automatically decide.
-(defvar cqtest-absolute-length-fields '()) ; automatically set.
+(defvar cqtest-absolute-length-fields '()
+  "Assoc holds field name and point that field starts from bol.
+It is automatically set.
+ (concretely, `cqtest-set-absoute-length-fields') sets.")
+
 (defvar cqtest-multi-flag-map '()
   "Multiplier flag map
 It is alist that have multiplier as key and flags (value)
@@ -83,23 +87,69 @@ Value is list '(QSO Points Multiplier)'")
 (if (null (fboundp 'cdddr))
     (defun cdddr (x) (cdr (cdr (cdr x)))))
 
-(defun chomp (string)
+(defun cqtest-chomp (string)
   "Truncate string's space at beginning and end."
   (replace-regexp-in-string "^\\s-+\\|\\s-+$" "" string))
 
-(defun copy-list (list)
+(defun cqtest-copy-list (list)
   "Copy list recursively. (data included list also is copied.)"
   (cond ((null list) nil)
-	((consp list) (cons (copy-list (car list))
-			    (copy-list (cdr list))))
+	((consp list) (cons (cqtest-copy-list (car list))
+			    (cqtest-copy-list (cdr list))))
 	(t list)))
 
-(defun get-previous-list (inlist field)
-  "Get previous field of list."
-  (cond ((null inlist) nil)
-	((null (cdr inlist)) nil)
-	((eq (cadr inlist) field) (car inlist))
-	(t (get-previous-list (cdr inlist) field))))
+(defun cqtest-take (i seq)
+  "Take `i' elements from list. Like `copy-sequence'."
+  (cond ((null seq) nil)
+	((<= i 0) nil)
+	((consp seq) (cons (car seq) (cqtest-take (1- i) (cdr seq))))
+	(t seq)))
+
+(defun cqtest-take-map (seq &optional n s)
+  "Take sublist from list `seq' and make list of sublist.
+Arguments:
+n : Max list length
+s : inneer use
+
+Example:
+seq = '(1 2 3 4)
+returns: '((1) (1 2) (1 2 3) (1 2 3 4))"
+  (let ((s1 (if (null s) 1 s))
+	(n1 (if (null n) nil (1- n))))	; next n
+    (cond ((null seq) nil)
+	  ((and (integerp n) (<= n 0)) nil)
+	  ((> s1 (length seq)) nil)
+	  ((consp seq) (cons (cqtest-take s1 seq)
+			     (cqtest-take-map seq n1 (1+ s1))))
+	  (t seq))))
+
+(defun cqtest-extract-keys-list-from-alist (seq)
+  "Get key list from alist.
+Example:
+Input: ((a . 1) (b . 2) (c . 3))
+Output: (a b c)"
+  (if (and (consp seq) (consp (car seq)))
+      (cons (caar seq) (cqtest-extract-keys-list-from-alist (cdr seq)))
+      nil))
+
+(defun cqtest-extract-values-list-from-alist (seq)
+  "Get value list from alist.
+Example:
+Input: ((a . 1) (b . 2) (c . 3))
+Output: (1 2 3)"
+  (if (and (consp seq) (consp (car seq)))
+      (cons (cdar seq) (cqtest-extract-values-list-from-alist (cdr seq)))
+      nil))
+
+(defun cqtest-make-alist-from-keyvalue (keys values)
+  "Make alist from key list and value list."
+  (if (and (null keys) (null values))
+      nil
+    (let ((ak (if (null keys) nil (car keys)))
+	  (dk (if (null keys) nil (cdr keys)))
+	  (av (if (null values) nil (car values)))
+	  (dv (if (null values) nil (cdr values))))
+      (cons (cons ak av) (cqtest-make-alist-from-keyvalue dk dv)))))
 
 (defun cqtest-comment-line-p ()
   "Return whether line which cursor exists is comment line or not"
@@ -111,28 +161,35 @@ Value is list '(QSO Points Multiplier)'")
   "Move beginning of editing line."
   ;; Editing line is last line.
   (goto-char (point-max))
-  (beginning-of-line)
-  )
+  (beginning-of-line))
 
 (defun cqtest-set-absolute-length-fields ()
   "Make alist `cqtest-absolute-length-fields'
 Make alist which holds absolute field length from beginning of line.
 And this alist is generated `cqtest-length-fields'.
 This function is only called when initialized."
-  (defun cqtest-set-absolute-length-fields-inner (ilist n)
-    (cond ((null ilist) nil)
-	  (t
-	   (cons (cons (caar ilist)
-		       (+ n cqtest-field-length-fieldsep))
-;		       (+ n (cdar ilist) cqtest-field-length-fieldsep))
-		 (cqtest-set-absolute-length-fields-inner
-		  (cdr ilist) (+ n (cdar ilist)
-				 cqtest-field-length-fieldsep)))
-	   )))
-  (setq cqtest-absolute-length-fields
-	(cqtest-set-absolute-length-fields-inner
-	 cqtest-length-fields
-	 0)))
+  (let* ((tmap (lambda (seq acc)
+		 (cond ((null seq) nil)
+		       ((> acc (length seq)) nil)
+		       ((consp seq)
+			(cons (cqtest-take acc seq)
+			      (funcall tmap seq (1+ acc))))
+		       (t seq))))
+	 ; (tmap '(1 2 3) 0) => '(() (1) (1 2) (1 2 3))
+	 (tmv (cqtest-take (length cqtest-length-fields)
+			   (funcall tmap cqtest-length-fields 0))))
+    (setq
+     cqtest-absolute-length-fields
+     (cqtest-make-alist-from-keyvalue
+      (mapcar 'car cqtest-length-fields)
+      (mapcar
+       (lambda (seq)
+	 (+ cqtest-field-length-fieldsep
+	    (apply '+ 
+		   (mapcar
+		    (lambda (n) (+ cqtest-field-length-fieldsep n))
+		    (cqtest-extract-values-list-from-alist seq)))))
+       tmv)))))
 
 (defun cqtest-init-multi-flag-map ()
   "Initialize `cqtest-multi-flag-map' from `cqtest-multi-map'.
@@ -163,7 +220,7 @@ Global variable `cqtest-multi-map' is defined on contest definition file."
 	   (cdr (assoc field cqtest-absolute-length-fields))))
 	(field-length-current-record
 	 (cdr (assoc field cqtest-length-fields))))
-    (chomp (buffer-substring-no-properties
+    (cqtest-chomp (buffer-substring-no-properties
      point-at-current-record
      (+ point-at-current-record field-length-current-record)))))
 
@@ -171,7 +228,7 @@ Global variable `cqtest-multi-map' is defined on contest definition file."
   "Find what field the cursor is belong to.
 If P is non-nil, Calculate P instead of (point)"
   (let* ((x)
-	 (ls (copy-list cqtest-absolute-length-fields))
+	 (ls (cqtest-copy-list cqtest-absolute-length-fields))
 	 (ret))
     (if (null p)
 	(setq x (- (point) (point-at-bol)))
