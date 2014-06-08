@@ -40,8 +40,8 @@ It is defined at each contest setting file
 and used at extended map `cqtest-multi-exmap'.")
 
 ;; Sample Contest Setteing File.
-(load "uectest.el")
-; (load "~/cqtest-mode/uectest.el")
+;; (load "uectest.el")
+;; (load "kagoshima.el")
 
 ;;; Default values (Semi-automatically detected.)
 (defvar cqtest-current-qso-no 0
@@ -312,13 +312,18 @@ If P is non-nil, Calculate P instead of (point)"
   (define-key cqtest-keymap (kbd "C-j") 'cqtest-decision-qso)
   (define-key cqtest-keymap (kbd "C-i") 'cqtest-move-field) ; tab
   (define-key cqtest-keymap (kbd "\t") 'cqtest-move-field)
+  (define-key cqtest-keymap (kbd "SPC") 'cqtest-move-field)
+  (define-key cqtest-keymap (kbd "C-SPC") 'cqtest-insert-space)
   (define-key cqtest-keymap (kbd "C-h") 'cqtest-delete-backward-char)
+  (define-key cqtest-keymap (kbd "DEL") 'cqtest-delete-backward-char)
+  (define-key cqtest-keymap (kbd "C-d") 'cqtest-delete-char)
   (define-key cqtest-keymap (kbd "C-c b") 'cqtest-set-band)
   (define-key cqtest-keymap (kbd "C-c m") 'cqtest-set-mode)
   (define-key cqtest-keymap (kbd "C-c o") 'cqtest-set-op)
   (define-key cqtest-keymap (kbd "C-c p") 'cqtest-set-pwr)
   (define-key cqtest-keymap (kbd "C-c C-v m") 'cqtest-multimap-make-buffer)
   (define-key cqtest-keymap (kbd "C-c C-v s") 'cqtest-scoremap-make-buffer)
+  (define-key cqtest-keymap (kbd "C-c C-c") 'cqtest-dupe-grep)
   (use-local-map cqtest-keymap)
 
   (let ((i ?a) (j (- ?A ?a)))
@@ -354,10 +359,15 @@ when the cursor is in callsign field and nr field"
 		  (+ (cdr (assoc cursor cqtest-length-fields))
 		     (cdr (assoc cursor cqtest-absolute-length-fields))))
 	       (progn
-		 (when (= (char-after) ? )
-		   (delete-char 1))
-		 (setq last-command-char (upcase last-command-char))
-		 (self-insert-command n))
+;;		 (when (= (char-after) ? )
+;;		   (delete-char 1))
+		 (if (boundp 'last-command-event)
+		     (setq last-command-event (upcase last-command-event))
+		   (setq last-command-char (upcase last-command-char)))
+		 (self-insert-command n)
+		 (save-excursion
+		   (search-forward " " nil t)
+		   (delete-char 1)))
 	     (message "%s is too long" cursor)))
 ;	  (t )
 	  )
@@ -369,6 +379,7 @@ when the cursor is in callsign field and nr field"
   (interactive)
   (delete-backward-char 1)
   (insert " ")
+  (backward-char 1)
   )
 
 ;; Move column to absolute field place.
@@ -377,6 +388,7 @@ when the cursor is in callsign field and nr field"
 
 (defun cqtest-move-field ()
   (interactive)
+  (cqtest-dupe-grep)
   (let ((p (- (point) (point-at-bol))))
     (if (eq (point-at-bol) (point-at-eol))
 	(insert-char ?  (cdar (last cqtest-absolute-length-fields))))
@@ -788,7 +800,11 @@ Inner save-excursion."
 parameter `multi-flag' is multi-flag-map element such as:
   '(\"101\" . (t nil nil nil t nil))'"
   (cqsm-set-multiplier-field band (1+ (cqsm-get-multiplier-field band)))
-  (cqmm-set-multivalue-with-band (cdr multi-flag) band t))
+  (cqmm-set-multivalue-with-band (cdr multi-flag) band t)
+  (move-to-column (+ (cdar (last cqtest-absolute-length-fields))
+		     (cdar (last cqtest-length-fields)) 1) t)
+  (insert multi))
+
 
 (defun cqtest-on-decision-qso ()
   "Called when decision QSO.
@@ -874,14 +890,37 @@ Set default value to field."
   (interactive)
   ;; TODO: Do action when only current line
   
+  (save-buffer)
   (cqtest-on-decision-qso)
-  (goto-char (point-at-eol))
   (unless (and (bolp) (eolp))
     (insert "\n"))
+  (goto-char (point-at-eol))
   (cqtest-qso-no-increment)
   (cqtest-on-new-qsoline)
   (move-to-column (cdr (assoc 'callsign cqtest-absolute-length-fields)))
   )
+
+(setq grep-command "grep -n -e ")
+(defun cqtest-dupe-grep ()
+  (interactive)
+  (grep (concat grep-command
+		(cqtest-get-value-from-record 'callsign)
+		" "
+		(file-relative-name buffer-file-name))))
+
+
+(defun cqtest-insert-space ()
+  (interactive)
+  (insert " ")
+)
+
+(defun cqtest-delete-char ()
+  (interactive)
+  (save-excursion
+    (delete-char 1)
+    (search-forward " " nil t)
+    (insert " ")))
+
 
 (provide 'cqtest)
 ;;; EOF
